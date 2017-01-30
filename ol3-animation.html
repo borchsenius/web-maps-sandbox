@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Marker Animation</title>
+    <link rel="stylesheet" href="https://openlayers.org/en/v3.20.1/css/ol.css" type="text/css">
+    <script src="https://openlayers.org/en/v3.20.1/build/ol.js"></script>
+</head>
+<body>
+<div id="map" class="map"></div>
+<label for="speed">
+    speed:&nbsp;
+    <input id="speed" type="range" min="1" max="99" step="1" value="5">
+</label>
+<button id="start-animation">Start Animation</button>
+<script>
+
+    var polyline = [
+        [54.5, 11.2],
+        [54.35, 12.2],
+        [54.75, 13.2],
+        [55.2, 13.3],
+        [55.1, 13.4],
+        [55.1, 13.5],
+        [55.1, 13.5],
+        [55.2, 13.6],
+        [55.3, 13.7],
+        [55.4, 13.8],
+        [55.5, 13.9]
+    ];
+    polyline.forEach(function(item,index,arr){
+       console.log("#" + index + "  " + item);
+        console.log("?"  );
+        arr[index] = ol.proj.transform([ item[1],item[0]], 'EPSG:4326', 'EPSG:900913');
+
+    });
+    var route = new ol.geom.LineString(polyline);
+
+    var routeCoords = route.getCoordinates();
+    var routeLength = routeCoords.length;
+
+    var routeFeature = new ol.Feature({
+        type: 'route',
+        geometry: route
+    });
+    var geoMarker = new ol.Feature({
+        type: 'geoMarker',
+        geometry: new ol.geom.Point(routeCoords[0])
+    });
+    var startMarker = new ol.Feature({
+        type: 'icon',
+        geometry: new ol.geom.Point(routeCoords[0])
+    });
+    var endMarker = new ol.Feature({
+        type: 'icon',
+        geometry: new ol.geom.Point(routeCoords[routeLength - 1])
+    });
+
+    var styles = {
+        'route': new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                width: 6, color: [237, 212, 0, 0.8]
+            })
+        }),
+        'icon': new ol.style.Style({
+            image: new ol.style.Icon({
+                anchor: [0.5, 1],
+                src: 'data/icon.png'
+            })
+        }),
+        'geoMarker': new ol.style.Style({
+            image: new ol.style.Circle({
+                radius: 7,
+                snapToPixel: false,
+                fill: new ol.style.Fill({color: 'black'}),
+                stroke: new ol.style.Stroke({
+                    color: 'white', width: 2
+                })
+            })
+        })
+    };
+
+    var animating = false;
+    var speed, now, orgIndexVal;
+    //var speedInput = document.getElementById('speed').value;
+    var startButton = document.getElementById('start-animation');
+
+    var vectorLayer = new ol.layer.Vector({
+        source: new ol.source.Vector({
+            features: [routeFeature, geoMarker, startMarker, endMarker]
+        }),
+        style: function(feature) {
+            // hide geoMarker if animation is active
+            if (animating && feature.get('type') === 'geoMarker') {
+                return null;
+            }
+            return styles[feature.get('type')];
+        }
+    });
+
+    var center = ol.proj.transform([ 13.2, 55.5], 'EPSG:4326', 'EPSG:900913');
+    var map = new ol.Map({
+        target: document.getElementById('map'),
+        loadTilesWhileAnimating: true,
+        view: new ol.View({
+            center: center,
+            zoom: 8,
+            minZoom: 2,
+            maxZoom: 19
+        }),
+        layers: [
+/*            new ol.layer.Tile({
+                source: new ol.source.BingMaps({
+                    imagerySet: 'AerialWithLabels',
+                    key: 'AkGbxXx6tDWf1swIhPJyoAVp06H0s0gDTYslNWWHZ6RoPqMpB9ld5FY1WutX8UoF'
+                })
+            })*/
+            new ol.layer.Tile({
+                title: 'OpenStreetMap',
+                type: 'base',
+                visible: true,
+                source: new ol.source.OSM()
+            })
+            ,
+            vectorLayer
+        ]
+    });
+    var index = 0;
+    var doPan = function(location) {
+        // pan from the current center
+        var pan = ol.animation.pan({
+            source: map.getView().getCenter()
+        });
+        map.beforeRender(pan);
+        // when we set the new location, the map will pan smoothly to it
+        map.getView().setCenter(location);
+    };
+
+    var moveFeature = function(event) {
+        var vectorContext = event.vectorContext;
+        var frameState = event.frameState;
+
+        if (animating) {
+            var elapsedTime = frameState.time - now;
+            // here the trick to increase speed is to jump some indexes
+            // on lineString coordinates
+            var index = Math.round(document.getElementById('speed').value * elapsedTime / 1000);
+            // index++;
+            console.log("point=" + index + " out of " + routeLength + " diff " + (index - orgIndexVal));
+            orgIndexVal = index;
+            if (index >= routeLength) {
+                index = 0; // rewind, and loop
+                console.log("loop");
+                stopAnimation(true);
+                startAnimation();
+                //return;
+            }
+
+            var currentPoint = new ol.geom.Point(routeCoords[index]);
+            var feature = new ol.Feature(currentPoint);
+            vectorContext.drawFeature(feature, styles.geoMarker);
+
+        }
+        // tell OL3 to continue the postcompose animation
+        map.render();
+    };
+
+
+
+    function startAnimation() {
+        if (animating) {
+            stopAnimation(false);
+        } else {
+
+            animating = true;
+            now = new Date().getTime();
+            speed = document.getElementById('speed').value;
+            //speed = 10;
+            startButton.textContent = 'Cancel Animation';
+            // hide geoMarker
+            geoMarker.setStyle(null);
+            // just in case you pan somewhere else
+           // map.getView().setCenter(center);
+            map.on('postcompose', moveFeature);
+            map.render();
+        }
+    }
+
+
+    /**
+     * @param {boolean} ended end of animation.
+     */
+    var stopAnimation = function(ended) {
+        animating = false;
+        startButton.textContent = 'Start Animation';
+
+        // if animation cancelled set the marker at the beginning
+        var coord = ended ? routeCoords[routeLength - 1] : routeCoords[0];
+        /** @type {ol.geom.Point} */ (geoMarker.getGeometry())
+                .setCoordinates(coord);
+        //remove listener
+        map.un('postcompose', moveFeature);
+    };
+
+    startButton.addEventListener('click', startAnimation, false);
+    doPan(center);
+
+</script>
+</body>
+</html>
